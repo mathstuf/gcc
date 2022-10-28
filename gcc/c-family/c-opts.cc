@@ -77,6 +77,9 @@ static bool verbose;
 /* Dependency output file.  */
 static const char *deps_file;
 
+/* Enhanced dependency output file.  */
+static const char *fdeps_file;
+
 /* The prefix given by -iprefix, if any.  */
 static const char *iprefix;
 
@@ -358,6 +361,23 @@ c_common_handle_option (size_t scode, const char *arg, HOST_WIDE_INT value,
       cpp_opts->deps.style = (code == OPT_MD ? DEPS_SYSTEM: DEPS_USER);
       cpp_opts->deps.need_preprocessor_output = true;
       deps_file = arg;
+      break;
+
+    case OPT_fdeps_format_:
+      if (!strcmp (arg, "p1689r5"))
+	cpp_opts->deps.format = DEPS_FMT_P1689R5;
+      else
+	error ("%<-fdeps-format=%> unknown format %<%s%>", arg);
+      break;
+
+    case OPT_fdeps_file_:
+      deps_seen = true;
+      fdeps_file = arg;
+      break;
+
+    case OPT_fdeps_target_:
+      deps_seen = true;
+      defer_opt (code, arg);
       break;
 
     case OPT_MF:
@@ -1272,6 +1292,7 @@ void
 c_common_finish (void)
 {
   FILE *deps_stream = NULL;
+  FILE *fdeps_stream = NULL;
 
   /* Note that we write the dependencies even if there are errors. This is
      useful for handling outdated generated headers that now trigger errors
@@ -1300,9 +1321,24 @@ c_common_finish (void)
      locations with input_location, which would be incorrect now.  */
   override_libcpp_locations = false;
 
+  if (cpp_opts->deps.format != DEPS_FMT_NONE)
+    {
+      if (!fdeps_file)
+	fdeps_stream = out_stream;
+      else if (fdeps_file[0] == '-' && fdeps_file[1] == '\0')
+	fdeps_stream = stdout;
+      else
+	{
+	  fdeps_stream = fopen (fdeps_file, "w");
+	  if (!fdeps_stream)
+	    fatal_error (input_location, "opening dependency file %s: %m",
+			 fdeps_file);
+	}
+    }
+
   /* For performance, avoid tearing down cpplib's internal structures
      with cpp_destroy ().  */
-  cpp_finish (parse_in, deps_stream);
+  cpp_finish (parse_in, deps_stream, fdeps_stream);
 
   if (deps_stream && deps_stream != out_stream && deps_stream != stdout
       && (ferror (deps_stream) || fclose (deps_stream)))
@@ -1374,6 +1410,8 @@ handle_deferred_opts (void)
 
 	if (opt->code == OPT_MT || opt->code == OPT_MQ)
 	  deps_add_target (deps, opt->arg, opt->code == OPT_MQ);
+	else if (opt->code == OPT_fdeps_target_)
+	  deps_add_output (deps, opt->arg, true);
       }
 }
 
